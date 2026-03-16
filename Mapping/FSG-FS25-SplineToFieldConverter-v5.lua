@@ -1,9 +1,9 @@
 -- Author: FSG Modding
--- Name: FSG - Spline to Field Converter v5
+-- Name: FSG - Spline to Field Converter v5.1
 -- Description: Paints random foliage for texture area that selected transform is located on.
 -- Icon:
 -- Hide: no
--- Date: 1.5.2025
+-- Date: 3.16.2025
 
 -- Load editor utils
 source("editorUtils.lua");
@@ -227,33 +227,32 @@ end
 -- Function to convert spline to transforms
 function SplineToFieldConverter:convertSpline(selectedGroup,spline,newGroup)
   --print(string.format('Spline id: %d',spline))
-  -- Get spline lengeth and make sure it is long enough for what we need to do
-  local splineLength = getSplineLength(spline);
+  -- Get spline length and make sure it is long enough for what we need to do
+  local splineLength = getSplineLength(spline)
   --print(string.format('Spline Length: %s',splineLength))
-  if splineLength < 3 then
-    print(string.format('Skipped Short Spline: %s | nodeId: %d',getName(spline), spline))
-    return nil
+  if splineLength == nil or splineLength <= 0 then
+    print(string.format('Skipped Invalid Spline: %s | nodeId: %d', getName(spline), spline))
+    return nil, nil, nil
   end
+
+  if splineLength < 3 then
+    print(string.format('Skipped Short Spline: %s | nodeId: %d', getName(spline), spline))
+    return nil, nil, nil
+  end
+
   -- Set translations
   local xParent, yParent, zParent = getWorldTranslation(selectedGroup)
-
-  local iObject = 0   -- Number of the object in objectsToPlace
-  local numObjectsToPlace = 0
-
   local pointNum = 1
 
   -- Set start of spline position
   local splinePos = 0
-  if splinePos < 0 then 
-    splinePos = 0 
+  if splinePos < 0 then
+    splinePos = 0
   end
-  if splinePos > 1 then 
-    print("Error: splinePos > 1 at start!")
-    return 
+  if splinePos > 1 then
+    print('Error: splinePos > 1 at start!')
+    return nil, nil, nil
   end
-
-  -- Position of last location in spline
-  local xlast, ylast, zlast = getSplinePosition(spline, 0);
 
   -- Initialize variables for center calculation
   local totalX, totalY, totalZ = 0, 0, 0
@@ -261,76 +260,50 @@ function SplineToFieldConverter:convertSpline(selectedGroup,spline,newGroup)
 
   -- Run through the spline and create transform groups to create an outer edge for field creation
   while splinePos <= 1 do
+    local x, y, z = getSplinePosition(spline, splinePos)
+    local terrainY = getTerrainHeightAtWorldPos(self.mTerrainID, x, y, z)
 
-    local placeId = true
-    local x, y, z = getSplinePosition(spline, splinePos);	
+    -- Terrain height 0 can be valid, so do not reject the point just because terrainY == 0.
+    local placeId = terrainY ~= nil
 
-    if startX == 0 then
-      startX = x
-    end
-
-    y = getTerrainHeightAtWorldPos(self.mTerrainID, x, y, z);
-    if y == 0 then -- remove object, probably outside the map - delete object, is probably outside the map -
-      placeId = false
-    end
-      
-    local rx, ry, rz = getSplineOrientation(spline, splinePos, 0, -1, 0);  
-
-    local yyy = 0
-
-    if placeId then -- place object 
-      local newPoint = createTransformGroup("point" .. pointNum)
+    if placeId then
+      local rx, ry, rz = getSplineOrientation(spline, splinePos, 0, -1, 0)
+      local newPoint = createTransformGroup('point' .. pointNum)
       pointNum = pointNum + 1
-      link(newGroup,newPoint)
-      local mDirX, mDirY,   mDirZ = worldDirectionToLocal( spline, getSplineDirection (spline, splinePos) );
-      local mVecDx, mVecDy, mVecDz = self:crossProduct( mDirX, mDirY, mDirZ, 0, 1, 0);
+      link(newGroup, newPoint)
 
-      setTranslation(newPoint, x-xParent, getTerrainHeightAtWorldPos(self.mTerrainID, x-xParent, 0, z-zParent), z-zParent);		
-      
-      setRotation(newPoint, rx, ry, rz);
-      yyy =  y-ylast	
-        
+      -- getTerrainHeightAtWorldPos expects world coordinates, then convert to local for the point node
+      setTranslation(newPoint, x - xParent, terrainY - yParent, z - zParent)
+      setRotation(newPoint, rx, ry, rz)
+
       -- Calculate center
       totalX = totalX + x
-      totalY = totalY + y
+      totalY = totalY + terrainY
       totalZ = totalZ + z
-
       pointCount = pointCount + 1
-
-    end -- if placeId
-
-    xlast = x -- update last position
-    ylast = y
-    zlast = z
-    yyy = self.objectDistance/splineLength
-    
-    if useDistanceTable then 
-      yyy = distanceTable[iObject+1]/splineLength -- Increase splinePos by 1 unit
-      
-      if iObject >= numObjectsToPlace then 
-        iObject = 0
-      end
-    end
-    splinePos = splinePos + yyy -- Increase splinePos by 1 unit
-    if splinePos < 0 then -- can be made negative by randomObjectDistance
-      splinePos = 0 
-    end
-    
-    iObject = iObject + 1 -- take next object
-    if iObject >= numObjectsToPlace then 
-      iObject = 0
     end
 
-  end -- while
+    -- calculate next position in spline based upon the object distance setting
+    local step = self.objectDistance / splineLength
+    if step == nil or step <= 0 then
+      step = 1 / math.max(math.floor(splineLength), 1)
+    end
+
+    splinePos = splinePos + step
+  end
+
+  -- Guard against divide-by-zero when no valid points could be created
+  if pointCount == 0 then
+    print(string.format('No valid points created for spline: %s | nodeId: %d', getName(spline), spline))
+    return newGroup, nil, nil
+  end
 
   -- Calculate the center coordinates
   local centerX = totalX / pointCount
   local centerZ = totalZ / pointCount
 
-  return newGroup, centerX, centerZ;
-
+  return newGroup, centerX, centerZ
 end
-
 function SplineToFieldConverter:getFieldSize(fieldNode)
     local indexPath = getUserAttribute(fieldNode, "polygonIndex")
     local polygonPoints = EditorUtils.getNodeByIndexPath(indexPath, fieldNode)
@@ -480,44 +453,41 @@ function SplineToFieldConverter:runSplineToFieldConverter()
 
         link(fieldNode, field)
 
-        setTranslation(nameIndicator, centerX, getTerrainHeightAtWorldPos(self.mTerrainID, centerX, 0, centerZ), centerZ)
-        setTranslation(teleportIndicator, centerX, getTerrainHeightAtWorldPos(self.mTerrainID, centerX, 0, centerZ), centerZ)
-
-        setUserAttribute(field, "polygonIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, polygonPoints))
-        setUserAttribute(field, "nameIndicatorIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, nameIndicator))
-        setUserAttribute(field, "teleportIndicatorIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, teleportIndicator))
-        setUserAttribute(field, "angle", UserAttributeType.INTEGER, 0)
-        setUserAttribute(field, "missionOnlyGrass", UserAttributeType.BOOLEAN, false)
-        setUserAttribute(field, "missionAllowed", UserAttributeType.BOOLEAN, true)
-
         if fieldSpline ~= nil and centerX ~= nil and centerZ ~= nil then
+          local centerY = getTerrainHeightAtWorldPos(self.mTerrainID, centerX, 0, centerZ)
+
+          setTranslation(nameIndicator, centerX, centerY, centerZ)
+          setTranslation(teleportIndicator, centerX, centerY, centerZ)
+
+          setUserAttribute(field, "polygonIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, polygonPoints))
+          setUserAttribute(field, "nameIndicatorIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, nameIndicator))
+          setUserAttribute(field, "teleportIndicatorIndex", UserAttributeType.STRING, EditorUtils.getNodeIndexPath(field, teleportIndicator))
+          setUserAttribute(field, "angle", UserAttributeType.INTEGER, 0)
+          setUserAttribute(field, "missionOnlyGrass", UserAttributeType.BOOLEAN, false)
+          setUserAttribute(field, "missionAllowed", UserAttributeType.BOOLEAN, true)
+
           -- Check if user wants to paint dirt or not and change from 1,2 to true,false
           if self.enableTexturePaint_Choice == 2 then
             -- Run the paint dirt within spline function
             self:runPaintFieldDirt(spline)
           end
 
-          -- print('====')
-          -- print('Field Spline Data')
-          -- print(fieldSpline)
-          -- print(centerX)
-          -- print(centerZ)
-          -- print('====')
-
           -- Get the number of fields to create
           local numberOfShapes = getNumOfChildren(fieldSpline)
 
           -- Make sure we have fields to work with
           if numberOfShapes == nil or numberOfShapes == 0 then
-            printWarning(string.format('Info: No fields were able to be created for field spline: %s - Skipping',fieldSpline))
-            return
+            printWarning(string.format('Info: No fields were able to be created for field spline: %s - Skipping', fieldSpline))
+            delete(field)
+          else
+            addSelection(field)
+            self:updateFieldNote(field)
+            print(string.format("Created new field '%s'", fieldName))
           end
-
+        else
+          printWarning(string.format("Skipping spline '%s' because no valid center could be calculated", getName(spline)))
+          delete(field)
         end
-
-        addSelection(field)
-        self:updateFieldNote(field)
-        print(string.format("Created new field '%s'", fieldName))
 
       end
     end
