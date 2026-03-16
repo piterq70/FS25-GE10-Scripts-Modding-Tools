@@ -3,7 +3,7 @@
 -- Description: Paints random foliage for texture area that selected transform is located on.
 -- Icon:
 -- Hide: no
--- Date: 3.16.2025
+-- Date: 3.16.2026
 
 -- Load editor utils
 source("editorUtils.lua");
